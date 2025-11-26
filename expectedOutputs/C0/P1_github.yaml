@@ -1,0 +1,124 @@
+name: NRuuviTag Automatic Integration Pipeline
+
+on:
+  push:
+    branches:
+      - '*'
+  pull_request:
+    types: [opened, reopened]
+    branches:
+      - 'main'
+      - 'master'
+
+permissions:
+  actions: read
+  contents: write
+  packages: write
+
+env:
+  TARGET_BRANCH: ${{ vars.TARGET_DEPLOYMENT_BRANCH }}
+  CAKE_VERSION: ${{ vars.CAKE_VERSION }}
+  BUILD_CONFIGURATION: ${{ vars.BUILD_CONFIGURATION }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  REGISTRY: ${{ secrets.REGISTRY }}
+  USERNAME: ${{ secrets.AZ_NRUUVITAG_USERNAME }}
+  PASSWORD: ${{ secrets.AZ_NRUUVITAG_PASS }}
+  IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
+
+jobs:
+  check-test-needed:
+    runs-on: ubuntu-latest
+    outputs:
+      should-test: ${{ steps.check.outputs.should-test }}
+      commit-sha: ${{ steps.check.outputs.commit-sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: |
+          # - Push events: Skip tests if only docs/config files changed
+          # - Pull requests: Skip if the same commit was already tested on push
+          # - Other events: Run tests for safety
+          if [ "${{ github.event_name }}" == *"push"* ]; then
+            CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }})
+            DOC_PATTERNS="\.md$ docs/ \.gitignore$ \.gitattributes$ \.gitmodules$ \.editorconfig$ LICENSE THIRD-PARTY-NOTICES"
+            # Check if any non-doc files were changed
+            NON_DOC_CHANGED=false
+            while IFS= read -r file; do
+              is_doc=false
+              for pattern in $DOC_PATTERNS; do
+                if echo "$file" | grep -qE "$pattern"; then
+                  is_doc=true
+                  break
+                fi
+              done
+              if [ "$is_doc" = false ]; then
+                NON_DOC_CHANGED=true
+                break
+              fi
+            done <<< "$CHANGED_FILES"
+            if [ "$NON_DOC_CHANGED" = true ]; then
+              echo "should-test=true" >> $GITHUB_OUTPUT
+              echo "commit-sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+              echo "Push event: Code changes detected - running tests"
+            else
+              echo "should-test=false" >> $GITHUB_OUTPUT
+              echo "commit-sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+              echo "Push event: Only docs/config files changed - skipping tests"
+            fi
+          elif [ "${{ github.event_name }}" == *"request"* ]; then
+            # Check if this commit was already tested in a recent push
+            COMMIT_SHA="${{ github.event.pull_request.head.sha }}"
+            echo "commit-sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+            # Check if there's a recent successful workflow for this commit
+            RECENT_RUN=$(gh run list \
+              --repo ${{ github.repository }} \
+              --workflow "${{ github.workflow }}" \
+              --event push \
+              --status success \
+              --limit 10 \
+              --json headSha,conclusion \
+              --jq ".[] | select(.headSha == \"$COMMIT_SHA\" and .conclusion == \"success\") | .headSha" || echo "")
+            if [ -n "$RECENT_RUN" ]; then
+              echo "should-test=false" >> $GITHUB_OUTPUT
+              echo "PR: Commit $COMMIT_SHA was already tested successfully - skipping"
+            else
+              echo "should-test=true" >> $GITHUB_OUTPUT
+              echo "PR: Commit $COMMIT_SHA not recently tested - running tests"
+            fi
+          else
+            echo "should-test=true" >> $GITHUB_OUTPUT
+            echo "Other event: Running tests"
+          fi
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    needs: check-test-needed
+    if: |
+      needs.check-test-needed.outputs.should-test == 'true'
+    
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive   # Required for version comparison
+
+      - uses: actions/cache@v4
+        with:
+          key: cake-tools
+          path: |
+            'tools'
+
+      - uses: actions/cache@v4
+        with:
+          key: nuget
+          path: |
+            '~/.nuget/packages'
+
+      - uses: cake-build/cake-action@v3
+        with:
+          version: ${{ env.CAKE_VERSION }}
+
+      - run: |
+          chmod +x build.sh
+          ./build.sh --target=Build --configuration=${{ env.BUILD_CONFIGURATION }}
+          ./build.sh --target=Test --configuration=${{ env.BUILD_CONFIGURATION }}

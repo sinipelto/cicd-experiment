@@ -1,0 +1,203 @@
+name: Example CICD Pipeline to Build, Test, Release and Deploy a Java Gradle Project
+
+on:
+  push:
+    branches:
+      - 'master'
+      - 'release'
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+      - 'version'
+  pull_request:
+    types: [opened, reopened]
+    branches:
+      - 'master'
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.txt'
+      - 'version'
+
+env:
+  APP_NAME: "test-app"
+  BUILD_DIR: "build/libs"
+  ENVIRONMENT: "Production"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: eclipse-temurin:8u422-b05-jdk
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/cache@v4
+        with:
+          key: ${{ github.run_id }}
+          path: |
+            '**/*.gradle*'
+            '**/gradle-wrapper.properties'
+      - run: |
+          ./gradlew build --no-daemon
+
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: eclipse-temurin:8u422-b05-jdk
+    permissions:
+      contents: read
+    needs:
+      - build
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/cache@v4
+        with:
+          key: ${{ github.run_id }}
+          path: |
+            '**/*.gradle*'
+            '**/gradle-wrapper.properties'
+      - run: |
+          ./gradlew test --no-daemon
+
+  release_pre:
+    runs-on: ubuntu-latest
+    container:
+      image: bitnami/git:latest
+    permissions:
+      contents: write
+    needs:
+      - build
+      - test
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+      - run: |
+          chmod +x version.sh
+          VERSION_OLD=$(cat version)
+          VERSION=$(./version.sh $VERSION_OLD)
+          echo "VERSION_OLD=$VERSION_OLD" >> ${GITHUB_ENV:-build.env}
+          echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}
+          echo $VERSION > version
+          git config --global --add safe.directory "$(pwd)"
+          git config user.name "DevOps User"
+          git config user.email "devops@company.com"
+          git add version
+          git commit -m "[skip ci] Automatic Bump Version from v${VERSION_OLD} to v${VERSION}."
+          [[ ${GITHUB_SERVER_URL} == *github* ]] && git push -o ci.skip origin HEAD:${{ github.ref }}
+          [[ ${GITHUB_SERVER_URL} == *gitlab* ]] && git push -o ci.skip https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git HEAD:${{ github.ref }}
+          true
+
+  release_post:
+    runs-on: ubuntu-latest
+    container:
+      image: eclipse-temurin:8u422-b05-jdk
+    permissions:
+      contents: write
+    needs:
+      - build
+      - test
+      - release_pre
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/cache@v4
+        with:
+          key: ${{ github.run_id }}
+          path: |
+            '**/*.gradle*'
+            '**/gradle-wrapper.properties'
+      - run: |
+          [ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)
+          [ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}
+          ./gradlew jar --no-daemon
+          mv -v ${BUILD_DIR}/*.jar ${APP_NAME}_v${VERSION}.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}_v${{ env.VERSION }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+          overwrite: true
+          include-hidden-files: false
+          path: |
+            version
+            Readme.txt
+            ${{ env.APP_NAME }}_v${{ env.VERSION }}.jar
+
+  release:
+    runs-on: ubuntu-latest
+    container:
+      image: registry.gitlab.com/gitlab-org/release-cli:latest
+    permissions:
+      contents: write
+    needs:
+      - build
+      - test
+      - release_pre
+      - release_post
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+      - run: |
+          [ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)
+          [ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}
+          true
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}_v${{ env.VERSION }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: "Automatic Release v${{ env.VERSION }}"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: "Automatic Release v${{ env.VERSION }}"
+          tag_name: v${{ env.VERSION }}
+          prerelease: false
+          draft: false
+          make_latest: true
+          files: |
+            version
+            Readme.txt
+            ${{ env.APP_NAME }}_v${{ env.VERSION }}.jar
+
+  deploy:
+    runs-on: ubuntu-latest
+    container:
+      image: eclipse-temurin:8u422-b05-jdk
+    permissions:
+      contents: read
+      packages: write
+      deployments: write
+    needs:
+      - build
+      - test
+      - release_pre
+      - release_post
+      - release
+    environment:
+      name: Production
+      url: ${{ github.repositoryUrl }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+      - uses: actions/cache@v4
+        with:
+          key: ${{ github.run_id }}
+          path: |
+            '**/*.gradle*'
+            '**/gradle-wrapper.properties'
+      - run: |
+          [ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)
+          [ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}
+          ./gradlew publish --no-daemon
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}_v${{ env.VERSION }}

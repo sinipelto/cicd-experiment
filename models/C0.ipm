@@ -1,0 +1,212 @@
+// Time tracking
+// 3.10.2025	17.00-17.30 - 0.5h		- initial version, basic structure
+// 				18.00-18.30 - 0.5h		- added meta and configurePipeline
+// 27.10.2025	16.15-16.45	- 0.5h		- adjust generator to support pipeline features
+// 28.10.2025	12.45-14.00 - 1.25h		- develop model itself
+//				14.00-14.30 - 0.5h		- adjust generator to adapt to new features
+// 11.11.2025	14.00-16.30 - 2.5h		- develop model & generator
+// 21.11.2025	15.00-17.00	- 2.0h		- major fixes, condidional draft
+// 25.11.2025	13.15-14.45	- 1.5h		- minor fixes, corrections
+
+// total: 9.25h
+
+package nRuuviTagPipeline {
+	package meta {
+		customAttribute doc = 'NRuuviTag Automatic Integration Pipeline';
+	}
+
+	swComponent configurePipeline {
+
+		swComponent onPush {
+			behavior includeBranches {
+				statement all {'*'}
+			}
+		}
+
+		swComponent onPullRequest {
+			behavior setTypes {
+				statement opened {'opened'}
+				statement reopened {'reopened'}
+			}
+
+			behavior includeBranches {
+				statement main {'main'}
+				statement master {'master'}
+			}
+		}
+
+		behavior setGlobalPermissions {
+			statement actions {'read'}
+			statement contents {'write'}
+			statement packages {'write'}
+		}
+
+		behavior setGlobalVariables {
+			statement target_branch { '<<VAR_TARGET_DEPLOYMENT_BRANCH>>' }
+			statement cake_version { '<<VAR_CAKE_VERSION>>' }
+			statement build_configuration { '<<VAR_BUILD_CONFIGURATION>>' }
+			statement gh_token { '<<SECRET_GITHUB_TOKEN>>' }
+			statement registry { '<<SECRET_REGISTRY>>' }
+			statement username { '<<SECRET_AZ_NRUUVITAG_USERNAME>>' }
+			statement password { '<<SECRET_AZ_NRUUVITAG_PASS>>' }
+			statement image_name { '<<SECRET_IMAGE_NAME>>' }
+		}
+	}
+
+   package jobs {
+		swComponent checkIfTestNeeded {
+			behavior setStage {
+				statement name { 'check_test_needed' }
+			}
+           behavior setCheckout {
+                statement depth { '0' } // GH
+           }
+
+		   behavior setOutputs {
+				// TODO: FORMAT: should-test:, commit-sha:
+				statement should_test { '<<steps.check.outputs.should-test>>' }
+				statement commit_sha { '<<steps.check.outputs.commit-sha>>' }
+		   }
+
+		   behavior setReportArtifact {
+              statement when { 'on_success' }
+              statement untracked { 'false' }
+              statement dotenv { 'build.env' }
+           }
+
+		   behavior executionScript {
+				statement 0 { '# - Push events: Skip tests if only docs/config files changed' }
+				statement 1 { '# - Pull requests: Skip if the same commit was already tested on push' }
+				statement 2 { '# - Other events: Run tests for safety' }
+				statement 3 { 'if [ "<<CI_EVENT_NAME>>" == *"push"* ]; then' }
+				statement 4 { '  CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r <<CI_COMMIT_SHA>>)' }
+				statement 5 { '  DOC_PATTERNS="\\.md$ docs/ \\.gitignore$ \\.gitattributes$ \\.gitmodules$ \\.editorconfig$ LICENSE THIRD-PARTY-NOTICES"' }
+				statement 6 { '  # Check if any non-doc files were changed' }
+				statement 7 { '  NON_DOC_CHANGED=false' }
+				statement 8 { '  while IFS= read -r file; do' }
+				statement 9 { '    is_doc=false' }
+				statement 10 { '    for pattern in $DOC_PATTERNS; do' }
+				statement 11 { '      if echo "$file" | grep -qE "$pattern"; then' }
+				statement 12 { '        is_doc=true' }
+				statement 13 { '        break' }
+				statement 14 { '      fi' }
+				statement 15 { '    done' }
+				statement 16 { '    if [ "$is_doc" = false ]; then' }
+				statement 17 { '      NON_DOC_CHANGED=true' }
+				statement 18 { '      break' }
+				statement 19 { '    fi' }
+				statement 20 { '  done <<< "$CHANGED_FILES"' }
+				statement 21 { '  if [ "$NON_DOC_CHANGED" = true ]; then' }
+				statement 22 { '    echo "should-test=true" >> ${GITHUB_OUTPUT:-build.env}' }
+				statement 23 { '    echo "commit-sha=<<CI_COMMIT_SHA>>" >> ${GITHUB_OUTPUT:-build.env}' }
+				statement 24 { '    echo "Push event: Code changes detected - running tests"' }
+				statement 25 { '  else' }
+				statement 26 { '    echo "should-test=false" >> ${GITHUB_OUTPUT:-build.env}' }
+				statement 27 { '    echo "commit-sha=<<CI_COMMIT_SHA>>" >> ${GITHUB_OUTPUT:-build.env}' }
+				statement 28 { '    echo "Push event: Only docs/config files changed - skipping tests"' }
+				statement 29 { '  fi' }
+				statement 30 { 'elif [ "<<CI_EVENT_NAME>>" == *"request"* ]; then' }
+				statement 31 { '  # Check if this commit was already tested in a recent push' }
+				statement 32 { '  COMMIT_SHA="<<CI_PR_HEAD_SHA>>"' }
+				statement 33 { '  echo "commit-sha=$COMMIT_SHA" >> ${GITHUB_OUTPUT:-build.env}' }
+				statement 34 { '  # Check if theres a recent successful workflow for this commit' }
+				statement 35 { '  [[ <<CI_SERVER_URL>> == *github* ]] && RECENT_RUN=$(gh run list \\ ' }
+				statement 36 { '    --repo ${{ github.repository }} \\ ' }
+				statement 37 { '    --workflow "${{ github.workflow }}" \\ ' }
+				statement 38 { '    --event push \\ ' }
+				statement 39 { '    --status success \\  ' }
+				statement 40 { '    --limit 10 \\ ' }
+				statement 41 { '    --json headSha,conclusion \\ ' }
+				statement 42 { '    --jq ".[] | select(.headSha == \\"$COMMIT_SHA\\" and .conclusion == \\"success\\") | .headSha" || echo "")' }
+				statement 43 { '  [[ <<CI_SERVER_URL>> == *gitlab* ]] && { \\ ' }
+				statement 44 { '    API_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/pipelines?sha=${COMMIT_SHA}&status=success&per_page=10"; \\ ' }
+				statement 45 { '    AUTH_HEADER=("JOB-TOKEN: ${CI_JOB_TOKEN}"); \\ ' }
+				statement 46 { '    RESP="$(curl --silent --show-error --fail -H "${AUTH_HEADER[0]}" "${API_URL}" || true)"; \\ ' }
+				statement 47 { '    RECENT_RUN=$(echo "$RESP" | jq -r ".[] | select(.source==\\"push\\") | .id" | head -n1); \\ ' }
+				statement 48 { '  }' }
+				statement 49 { '  if [ -n "$RECENT_RUN" ]; then' }
+				statement 50 { '    echo "should-test=false" >> ${GITHUB_OUTPUT:-build.env}' }
+				statement 51 { '    echo "PR: Commit $COMMIT_SHA was already tested successfully - skipping"' }
+				statement 52 { '  else' }
+				statement 53 { '    echo "should-test=true" >> ${GITHUB_OUTPUT:-build.env}' }
+				statement 54 { '    echo "PR: Commit $COMMIT_SHA not recently tested - running tests"' }
+				statement 55 { '  fi' }
+				statement 56 { 'else' }
+				statement 57 { '  echo "should-test=true" >> ${GITHUB_OUTPUT:-build.env}' }
+				statement 58 { '  echo "Other event: Running tests"' }
+				statement 59 { 'fi' }
+		   }
+
+			// runs-on: ...
+		   customAttribute baseOs = '<<BASE_OS_LINUX>>';
+		}
+
+		swComponent buildAndTest {
+			behavior setStage {
+				statement name { 'build_and_test' }
+			}
+		   behavior setCheckout {
+				statement submodules { 'recursive' } // GH
+		   }
+		   behavior setDependencies {
+				statement d0 { 'checkIfTestNeeded' }
+		   }
+		   // if: |
+		   //	.... &&
+		   //	.... &&
+		   //	....
+		   behavior setConditions {
+				statement c0 { '${SHOULD_TEST} == \"true\"' }
+		   }
+			// setCacheXXXXX => add to cache list
+		   behavior setCacheNuget {
+				statement path0 { '~/.nuget/packages' }
+				customAttribute key = 'nuget';
+		   }
+		   behavior setCacheCake {
+				statement path0 { 'tools' }
+				customAttribute key = 'cake-tools';
+		   }
+		   // setLibraryXXXXXX => steps => uses: XXXX with YYYYY
+		   behavior setLibrarySetupCake {
+				// additional params: with: param0, param1, ...
+				statement version { '<<ENV_CAKE_VERSION>>' }
+				// uses: name@ver
+				customAttribute key = 'cake-build/cake-action';
+				customAttribute version = 'v3';
+		   }
+		   behavior executionScript {
+				statement 0 { 'chmod +x build.sh' }
+				statement 1 { './build.sh --target=Build --configuration=<<ENV_BUILD_CONFIGURATION>>' }
+				statement 2 { './build.sh --target=Test --configuration=<<ENV_BUILD_CONFIGURATION>>' }
+		   }
+
+		   customAttribute baseOs = '<<BASE_OS_LINUX>>';
+		}
+
+		// swComponent syncToAzureDevops {
+		// 	behavior setStage {
+		// 		statement name { 'sync_azure' }
+		// 	}
+
+		// 	behavior setDependencies {
+		// 		statement d0 { 'checkIfTestNeeded' }
+		// 		statement d1 { 'buildAndTest' }
+		// 	}
+
+		// 	behavior setConditions {
+		// 		statement c0 { '<<ALWAYS>>' }
+		// 		statement c1 { '<<CI_EVENT_NAME>>==<<CI_EVENT_PUSH>>' }
+		// 		statement c2 { '<<NOT_CONTAINS>>(<<NEEDS_RESULT>>,<<FAILURE>>)' }
+		// 		statement c3 { '<<NOT_CONTAINS>>(<<NEEDS_RESULT>>,<<CANCELLED>>)' }
+		// 	}
+		// 	// TODO GH vs GL
+		// 	behavior includeScript {
+		// 		statement name { 'repo-sync.yml' }
+		// 		statement secrets { 'inherit' }
+		// 	}
+
+		//    customAttribute baseOs = '<<BASE_OS_LINUX>>';
+		// }
+   }
+}

@@ -1,0 +1,224 @@
+workflow:
+  name: Example CICD Pipeline to Build, Test, Release and Deploy a Java Gradle Project
+
+stages:
+  - build
+  - test
+  - release_pre
+  - release_post
+  - release
+  - deploy
+
+variables:
+  APP_NAME: "test-app"
+  BUILD_DIR: "build/libs"
+  ENVIRONMENT: "Production"
+
+build:
+  stage: build
+  tags:
+    - saas-linux-medium-amd64
+  only:
+    refs:
+      - 'master'
+      - 'release'
+  except:
+    changes:
+      - '**/*.md'
+      - '**/*.txt'
+      - 'version'
+  image:
+    name: eclipse-temurin:8u422-b05-jdk
+  cache:
+    - key: ${CI_PIPELINE_ID}
+      when: on_success
+      untracked: false
+      paths:
+        - '**/*.gradle*'
+        - '**/gradle-wrapper.properties'
+  script:
+    - 'echo "Executing Job: build"'
+    - './gradlew build --no-daemon'
+
+test:
+  stage: test
+  tags:
+    - saas-linux-medium-amd64
+  only:
+    refs:
+      - 'release'
+      - 'master'
+  except:
+    changes:
+      - 'version'
+      - '**/*.txt'
+      - '**/*.md'
+  image:
+    name: eclipse-temurin:8u422-b05-jdk
+  needs:
+    - build
+  cache:
+    - key: ${CI_PIPELINE_ID}
+      when: on_success
+      untracked: false
+      paths:
+        - '**/*.gradle*'
+        - '**/gradle-wrapper.properties'
+  script:
+    - 'echo "Executing Job: test"'
+    - './gradlew test --no-daemon'
+
+release_pre:
+  stage: release_pre
+  tags:
+    - saas-linux-medium-amd64
+  only:
+    refs:
+      - 'master'
+      - 'release'
+  except:
+    changes:
+      - '**/*.md'
+      - '**/*.txt'
+      - 'version'
+  image:
+    name: bitnami/git:latest
+  needs:
+    - build
+    - test
+  script:
+    - 'echo "Executing Job: release_pre"'
+    - 'chmod +x version.sh'
+    - 'VERSION_OLD=$(cat version)'
+    - 'VERSION=$(./version.sh $VERSION_OLD)'
+    - 'echo "VERSION_OLD=$VERSION_OLD" >> ${GITHUB_ENV:-build.env}'
+    - 'echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}'
+    - 'echo $VERSION > version'
+    - 'git config --global --add safe.directory "$(pwd)"'
+    - 'git config user.name "DevOps User"'
+    - 'git config user.email "devops@company.com"'
+    - 'git add version'
+    - 'git commit -m "[skip ci] Automatic Bump Version from v${VERSION_OLD} to v${VERSION}."'
+    - '[[ ${CI_SERVER_HOST} == *github* ]] && git push -o ci.skip origin HEAD:${CI_COMMIT_BRANCH}'
+    - '[[ ${CI_SERVER_HOST} == *gitlab* ]] && git push -o ci.skip https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git HEAD:${CI_COMMIT_BRANCH}'
+    - 'true'
+  artifacts:
+    when: on_success
+    untracked: false
+    reports:
+      dotenv: build.env
+
+release_post:
+  stage: release_post
+  tags:
+    - saas-linux-medium-amd64
+  only:
+    refs:
+      - 'release'
+      - 'master'
+  except:
+    changes:
+      - 'version'
+      - '**/*.txt'
+      - '**/*.md'
+  image:
+    name: eclipse-temurin:8u422-b05-jdk
+  needs:
+    - build
+    - test
+    - release_pre
+  cache:
+    - key: ${CI_PIPELINE_ID}
+      when: on_success
+      untracked: false
+      paths:
+        - '**/*.gradle*'
+        - '**/gradle-wrapper.properties'
+  script:
+    - 'echo "Executing Job: release_post"'
+    - '[ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)'
+    - '[ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}'
+    - './gradlew jar --no-daemon'
+    - 'mv -v ${BUILD_DIR}/*.jar ${APP_NAME}_v${VERSION}.jar'
+  artifacts:
+    name: ${APP_NAME}_v${VERSION}
+    when: on_success
+    untracked: false
+    access: all
+    expire_in: 7 days
+    paths:
+      - version
+      - Readme.txt
+      - ${APP_NAME}_v${VERSION}.jar
+
+release:
+  stage: release
+  tags:
+    - saas-linux-medium-amd64
+  only:
+    refs:
+      - 'master'
+      - 'release'
+  except:
+    changes:
+      - '**/*.md'
+      - '**/*.txt'
+      - 'version'
+  image:
+    name: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - build
+    - test
+    - release_pre
+    - release_post
+  script:
+    - 'echo "Executing Job: release"'
+    - '[ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)'
+    - '[ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}'
+    - 'true'
+  release:
+    name: "Automatic Release v${VERSION}"
+    description: "Automatic Release v${VERSION}"
+    tag_name: v${VERSION}
+    tag_message: "Release Tag: v${VERSION}"
+    ref: ${CI_COMMIT_BRANCH}
+
+deploy:
+  stage: deploy
+  tags:
+    - saas-linux-medium-amd64
+  only:
+    refs:
+      - 'release'
+      - 'master'
+  except:
+    changes:
+      - 'version'
+      - '**/*.txt'
+      - '**/*.md'
+  image:
+    name: eclipse-temurin:8u422-b05-jdk
+  needs:
+    - build
+    - test
+    - release_pre
+    - release_post
+    - release
+  cache:
+    - key: ${CI_PIPELINE_ID}
+      when: on_success
+      untracked: false
+      paths:
+        - '**/*.gradle*'
+        - '**/gradle-wrapper.properties'
+  script:
+    - 'echo "Executing Job: deploy"'
+    - '[ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)'
+    - '[ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}'
+    - './gradlew publish --no-daemon'
+  environment:
+    name: Production
+    url: ${CI_REPOSITORY_URL}
+    action: start
+    deployment_tier: production
+

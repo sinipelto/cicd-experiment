@@ -1,0 +1,108 @@
+workflow:
+  name: NRuuviTag Automatic Integration Pipeline
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+
+stages:
+  - check_test_needed
+  - build_and_test
+
+variables:
+  GIT_DEPTH: "0"
+  GIT_SUBMODULE_STRATEGY: recursive
+  TARGET_BRANCH: ${TARGET_DEPLOYMENT_BRANCH}
+  CAKE_VERSION: ${CAKE_VERSION}
+  BUILD_CONFIGURATION: ${BUILD_CONFIGURATION}
+  GH_TOKEN: ${GITHUB_TOKEN}
+  REGISTRY: ${REGISTRY}
+  USERNAME: ${AZ_NRUUVITAG_USERNAME}
+  PASSWORD: ${AZ_NRUUVITAG_PASS}
+  IMAGE_NAME: ${IMAGE_NAME}
+
+check-test-needed:
+  stage: check_test_needed
+  only:
+    refs:
+      - '*'
+  script:
+    - '# - Push events: Skip tests if only docs/config files changed'
+    - '# - Pull requests: Skip if the same commit was already tested on push'
+    - '# - Other events: Run tests for safety'
+    - 'if [ "${CI_PIPELINE_SOURCE}" == *"push"* ]; then'
+    - '  CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r ${CI_COMMIT_SHA})'
+    - '  DOC_PATTERNS="\.md$ docs/ \.gitignore$ \.gitattributes$ \.gitmodules$ \.editorconfig$ LICENSE THIRD-PARTY-NOTICES"'
+    - '  # Check if any non-doc files were changed'
+    - '  NON_DOC_CHANGED=false'
+    - '  while IFS= read -r file; do'
+    - '    is_doc=false'
+    - '    for pattern in $DOC_PATTERNS; do'
+    - '      if echo "$file" | grep -qE "$pattern"; then'
+    - '        is_doc=true'
+    - '        break'
+    - '      fi'
+    - '    done'
+    - '    if [ "$is_doc" = false ]; then'
+    - '      NON_DOC_CHANGED=true'
+    - '      break'
+    - '    fi'
+    - '  done <<< "$CHANGED_FILES"'
+    - '  if [ "$NON_DOC_CHANGED" = true ]; then'
+    - '    echo "should-test=true" >> ${GITHUB_OUTPUT:-build.env}'
+    - '    echo "commit-sha=${CI_COMMIT_SHA}" >> ${GITHUB_OUTPUT:-build.env}'
+    - '    echo "Push event: Code changes detected - running tests"'
+    - '  else'
+    - '    echo "should-test=false" >> ${GITHUB_OUTPUT:-build.env}'
+    - '    echo "commit-sha=${CI_COMMIT_SHA}" >> ${GITHUB_OUTPUT:-build.env}'
+    - '    echo "Push event: Only docs/config files changed - skipping tests"'
+    - '  fi'
+    - 'elif [ "${CI_PIPELINE_SOURCE}" == *"request"* ]; then'
+    - '  # Check if this commit was already tested in a recent push'
+    - '  COMMIT_SHA="${CI_MERGE_REQUEST_SOURCE_BRANCH_SHA}"'
+    - '  echo "commit-sha=$COMMIT_SHA" >> ${GITHUB_OUTPUT:-build.env}'
+    - '  # Check if theres a recent successful workflow for this commit'
+    - '  API_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/pipelines?sha=${COMMIT_SHA}&status=success&per_page=10"'
+    - '  AUTH_HEADER=("JOB-TOKEN: ${CI_JOB_TOKEN}")'
+    - '  RESP="$(curl --silent --show-error --fail -H "${AUTH_HEADER[0]}" "${API_URL}" || true)"'
+    - '  RECENT_RUN=$(echo "$RESP" | jq -r ".[] | select(.source==\"push\") | .id" | head -n1)'
+    - '  if [ -n "$RECENT_RUN" ]; then'
+    - '    echo "should-test=false" >> ${GITHUB_OUTPUT:-build.env}'
+    - '    echo "PR: Commit $COMMIT_SHA was already tested successfully - skipping"'
+    - '  else'
+    - '    echo "should-test=true" >> ${GITHUB_OUTPUT:-build.env}'
+    - '    echo "PR: Commit $COMMIT_SHA not recently tested - running tests"'
+    - '  fi'
+    - 'else'
+    - '  echo "should-test=true" >> ${GITHUB_OUTPUT:-build.env}'
+    - '  echo "Other event: Running tests"'
+    - 'fi'
+  artifacts:
+    when: on_success
+    untracked: false
+    reports:
+      dotenv: build.env
+
+build-and-test:
+  stage: build_and_test
+  only:
+    refs:
+      - '*'
+  needs:
+    - check-test-needed
+  rules:
+    - if: '${SHOULD_TEST} == "true"'
+  cache:
+    - key: cake-tools
+      when: on_success
+      untracked: false
+      paths:
+        - 'tools'
+    - key: nuget
+      when: on_success
+      untracked: false
+      paths:
+        - '~/.nuget/packages'
+  script:
+    - 'chmod +x build.sh'
+    - './build.sh --target=Build --configuration=${BUILD_CONFIGURATION}'
+    - './build.sh --target=Test --configuration=${BUILD_CONFIGURATION}'
+

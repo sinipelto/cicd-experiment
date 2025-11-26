@@ -1,0 +1,476 @@
+// CICD root package
+package cicdRoot {
+    // Pipeline metadata
+    // e.g. name, etc
+    package meta {
+       customAttribute doc = 'Example CICD Pipeline to Build, Test, Release and Deploy a Java Gradle Project';
+    }
+
+    // NOTES FOR GENERATION ON VARIABLES:
+    //          FOR VARIABLES INSIDE SCRIPT, DO NOT SUBSTITUTE!
+    //          FOR ALL VARIABLES NOT IN SCRIPT, DO REPLACE:
+    //          GITHUB GENERATOR: $varName/${varName} => ${{ env.varName }} // note: the pattern is constant for all variables
+    //          GITLAB GENERATOR: $varName/${varName} => $varName/${varName} (no transformation)
+    //          OUR CUSTOM VARIABLES, DO SUBSITUTE:
+    //          GITHUB GENERATOR: <<SPECIAL_VAR>> => ${{ github.special_var }} // note, these are fixed mappings and might change per-variable
+    //          GITHUB GENERATOR: <<ANOTHER_SPECIAL_VAR>> => ${ANOTHER_VAR_EXAMPLE}
+    //          GITLAB GENERATOR: <<SPECIAL_VAR>> => $SOME_OTHER_VAR_IN_GL // note, these are fixed mappings and might change per-variable
+    //          GITLAB GENERATOR: <<ENVIRONMENT_SOME_VAR>> => ${{ env.SPECIAL_VAR }} // $SOME_VAR
+    //          GITLAB GENERATOR: <<SECRET_SOME_VAR>> => ${{ secrets.SOME_VAR }} // $SOME_VAR
+
+    // suggestion pipeline configuration
+    // todo: move includes, excludes to per-job level??? => PROBLEM FOR GITLAB: https://forum.gitlab.com/t/multiple-pipelines-for-same-repo/3897/4
+    swComponent configurePipeline {
+        // TODO: Note: generator should check exclusiveness of 
+        //       include and exclude branch specification
+        //       i.e. whitelist and blacklist principles
+
+        // BOTH GH AND GL!
+        swComponent onPush {
+            // Define branches for whitelist which trigger the pipeline execution 
+            // Any branch NOT matching these will NOT trigger the execution!
+            behavior includeBranches {
+                statement includeMaster { 'master' }
+                statement includeRelease { 'release' }
+            }
+            // Define glob patterns for blacklist of files which do NOT trigger the pipeline execution 
+            // Any file NOT matching these WILL trigger the execution!
+            behavior excludeFiles {
+                statement excludeMarkdown { '**/*.md' }
+                statement excludeText { '**/*.txt' }
+                statement excludeVersionFile { 'version' }
+            }
+            // MUTUALLY EXCLUSIVE WITH INCLUDE BRANCHES!
+            // Define branches for blacklist which do NOT trigger the pipeline execution
+            // Any branch NOT matching these WILL trigger the execution!
+            // Example definition:
+            // a build & test by default all branches except ... because they use some other pipeline 
+            // behavior excludeBranches {
+            //     statement excludeThis { 'this' }
+            //     statement excludeThat { 'that' }
+            // }
+            behavior excludeBranches {
+                // statement some {'test'}
+            }
+            // MUTUALLY EXCLUSIVE WITH EXCLUDE FILES!
+            // Define glob patterns for whitelist files which trigger the pipeline execution 
+            // Any file NOT matching these will NOT trigger the execution!
+            // Example definition:
+            // behavior includeFiles {
+            //     statement includeJavaSources { '**/*.java' }
+            //     statement includeCSources { '**/*.c' }
+            //     statement includeGradleFiles { '**/*.gradle*' }
+            //     statement includeCppHeaders { '**/*.hh' }
+            // }
+            behavior includeFiles {
+                // statement dll {'win32api.dll'}
+            }
+        }
+
+        // ONLY SUPPORTED IN GH
+        swComponent onPullRequest {
+			behavior setTypes {
+				statement opened {'opened'}
+				statement reopened {'reopened'}
+			}
+            // Define branches for whitelist which trigger the pipeline execution 
+            // Any branch NOT matching these will NOT trigger the execution!
+            behavior includeBranches {
+                statement includeMaster { 'master' }
+            }
+            // Define glob patterns for blacklist of files which do NOT trigger the pipeline execution 
+            // Any file NOT matching these WILL trigger the execution!
+            behavior excludeFiles {
+                statement excludeMarkdown { '**/*.md' }
+                statement excludeText { '**/*.txt' }
+                statement excludeVersionFile { 'version' }
+            }
+        }
+
+        // PIPELINE LEVEL CONSTANT VARIABLES
+        // A Dictionary - Unsorted List of Key-Value pairs
+        behavior setGlobalVariables {
+            statement app_Name { '"test-app"' }
+            statement build_Dir { '"build/libs"' }
+            statement environment { '"Production"' }
+        }
+
+        // SET GLOBAL LEVEL PERMS (GH)
+		// behavior setGlobalPermissions {
+		// 	statement actions { 'read' }
+		// 	statement contents { 'write' }
+		// 	statement packages { 'write' }
+		// }
+    }
+
+    package jobs {
+       swComponent build {
+            // STAGES DO NOT EXIST IN GITHUB!!
+            // Gitlab has stages=>jobs, 1+ jobs per stage
+            // GitHub only has jobs and needs: [list of dep jobs]
+           behavior setStage {
+               statement stage { 'build' }
+           }
+           // Does not work!
+           // Must have at least 1 statement to be collected
+           // Using swcomponent custom attr as workaround
+        //    behavior setCheckout {
+        //        customAttribute key = '<<PIPELINE_REF>>';
+        //    }
+           behavior executionScript {
+               statement 0 { './gradlew build --no-daemon' }
+           }
+           behavior setPermissions {
+               statement contents { 'read' }
+           }
+           // TODO ONLY ONE IMAGE PER JOB!
+           // Basically tells in which container (based on which image) the job (script) should on
+           behavior setContainerImage {
+               statement name { 'eclipse-temurin:8u422-b05-jdk' }
+           }
+           // ONLY ONE CACHE PER JOB
+           // Note: Generator should look at syntax (<< >>) of value 
+           //       to generate the variable replacement
+           // GH: ${{ github.run_id }}
+           // GL: $CI_PIPELINE_ID
+           // CircleCI: ...
+           // TravisCI: ...
+           // ...
+           behavior setCache {
+               statement path0 { '**/*.gradle*' }
+               statement path1 { '**/gradle-wrapper.properties' }
+               customAttribute key = '<<PIPELINE_ID>>';
+           }
+           // <<linux>> will be replaced by a "default base image"
+           // depending on the platform
+           // GL: cicd root default all jobs => tags: -saas-linux-medium-amd64
+           // GH: per-job => runs-on: ubuntu-latest
+           // TODO ROOT LEVEL OR PER JOB LEVEL???
+           // FOR THIS EXAMPLE SAME OS FOR ALL JOBS BUT COULD ALSO DIFFER PER-JOB IN SOME CASES E.G. LINUX VS WINDOWS VS MACOS JOBS???
+           // PROBLEM FOR GITLAB: https://forum.gitlab.com/t/multiple-pipelines-for-same-repo/3897/4
+           // SO: JOB-LEVEL IT IS
+           customAttribute baseOs = '<<BASE_OS_LINUX>>';
+           customAttribute checkoutRef = '<<PIPELINE_REF>>';
+       }
+   
+       swComponent test {
+           behavior setStage {
+               statement stage { 'test' }
+           }
+           // Does not work!
+           // Must have at least 1 statement to be collected
+           // Using swcomponent custom attr as workaround
+            //    behavior setCheckout {
+            //        customAttribute key = '<<PIPELINE_REF>>';
+            //    }
+           behavior executionScript {
+               statement 0 { './gradlew test --no-daemon' }
+           }
+           behavior setDependencies {
+               statement buildJob { 'build' }
+           }
+           behavior setPermissions {
+               statement contents { 'read' }
+           }
+           behavior setContainerImage {
+               statement name { 'eclipse-temurin:8u422-b05-jdk' }
+           }
+           behavior setCache {
+               statement path0 { '**/*.gradle*' }
+               statement path1 { '**/gradle-wrapper.properties' }
+               customAttribute key = '<<PIPELINE_ID>>';
+           }
+           customAttribute baseOs = '<<BASE_OS_LINUX>>';
+           customAttribute checkoutRef = '<<PIPELINE_REF>>';
+       }
+   
+       swComponent release_pre {
+           behavior setStage {
+             statement stage { 'release_pre' }
+           }
+           // Only for GL => Pass created variables to other jobs!
+           behavior setReportArtifact {
+              statement when { 'on_success' }
+              statement untracked { 'false' }
+              statement dotenv { 'build.env' }
+           }
+        //    behavior setCheckout {
+        //        customAttribute key = '<<PIPELINE_REF>>';
+        //    }
+           behavior executionScript {
+              statement 0 { 'chmod +x version.sh' }
+              statement 1 { 'VERSION_OLD=$(cat version)' }
+              statement 2 { 'VERSION=$(./version.sh $VERSION_OLD)' }
+              statement 3 { 'echo "VERSION_OLD=$VERSION_OLD" >> ${GITHUB_ENV:-build.env}' }
+              statement 4 { 'echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}' }
+              statement 5 { 'echo $VERSION > version' }
+              statement 6 { 'git config --global --add safe.directory "$(pwd)"' }
+              statement 7 { 'git config user.name "DevOps User"' }
+              statement 8 { 'git config user.email "devops@company.com"' }
+              statement 9 { 'git add version' }
+              statement 10 { 'git commit -m "[skip ci] Automatic Bump Version from v${VERSION_OLD} to v${VERSION}."' }
+              statement 11 { '[[ <<CI_SERVER_URL>> == *github* ]] && git push -o ci.skip origin HEAD:<<PIPELINE_REF>>' }
+              statement 12 { '[[ <<CI_SERVER_URL>> == *gitlab* ]] && git push -o ci.skip https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git HEAD:<<PIPELINE_REF>>' }
+              statement 13 { 'true' }
+           }
+           behavior setDependencies {
+               statement buildJob { 'build' }
+               statement testJob { 'test' }
+           }
+           behavior setPermissions {
+               statement contents { 'write' }
+           }
+           behavior setContainerImage {
+               statement name { 'bitnami/git:latest' }
+           }
+           customAttribute baseOs = '<<BASE_OS_LINUX>>';
+           customAttribute checkoutRef = '<<PIPELINE_REF>>';
+       }
+   
+       swComponent release_post {
+           behavior setStage {
+               statement stage { 'release_post' }
+           }
+        //    behavior setCheckout {
+        //        customAttribute key = '<<PIPELINE_REF>>';
+        //    }
+           behavior executionScript {
+               statement 0 { '[ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)' }
+               statement 1 { '[ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}' }
+               statement 2 { './gradlew jar --no-daemon' }
+               statement 3 { 'mv -v ${BUILD_DIR}/*.jar ${APP_NAME}_v${VERSION}.jar' }
+           }
+           behavior setDependencies {
+               statement buildJob { 'build' }
+               statement testJob { 'test' }
+               statement releasePreJob { 'release_pre' }
+           }
+           behavior setPermissions {
+               statement contents { 'write' }
+           }
+           behavior setContainerImage {
+               statement name { 'eclipse-temurin:8u422-b05-jdk' }
+           }
+           // ONLY ONE CACHE PER JOB
+           behavior setCache {
+               statement path0 { '**/*.gradle*' }
+               statement path1 { '**/gradle-wrapper.properties' }
+               customAttribute key = '<<PIPELINE_ID>>';
+           }
+
+           behavior setBuildArtifact {
+            statement path0 { 'version' }
+            statement path1 { 'Readme.txt' }
+            statement path2 { '<<ENV_APP_NAME>>_v<<ENV_VERSION>>.jar' }
+
+            statement name { '<<ENV_APP_NAME>>_v<<ENV_VERSION>>' } // NOTE: subsitution for GITHUB
+            // TODO: USE CONSTANT UNIT FOR ALL PERIODS FOR SAKE OF SIMPLICITY for generator???
+            //      GitHub uses num of days only? 'retention-days: 7'
+            //      GitLab can handle any type (min, hour, day, week, ...) as 'expiry_in: 7 days'
+            statement expiryIn { '7' } // GL: '7 days' // GH: '7'
+            statement untracked { 'false' } // GL
+            statement when { 'on_success' } // GL
+            statement overwrite { 'true' } // GH
+            statement access { 'all' } // GL
+            statement untracked { 'false' } // GL
+            statement ifNoFilesFound { 'error' } // GH: if-no-files-found: error
+            statement compressionLevel { '0' } // GH: compression-level: 0
+            statement includeHiddenFiles { 'false' } // GH: include-hidden-files: false
+           }
+           
+           customAttribute baseOs = '<<BASE_OS_LINUX>>';
+           customAttribute checkoutRef = '<<PIPELINE_REF>>';
+       }
+   
+       swComponent release {
+           behavior setStage {
+               statement stage { 'release' }
+           }
+           behavior executionScript {
+               statement 0 { '[ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)' }
+               statement 1 { '[ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}' }
+               statement 2 { 'true' }
+           }
+           behavior setDependencies {
+               statement buildJob { 'build' }
+               statement testJob { 'test' }
+               statement releasePreJob { 'release_pre' }
+               statement releasePostJob { 'release_post' }
+           }
+           behavior setPermissions {
+               statement contents { 'write' }
+           }
+        //    behavior setCheckout {
+        //        customAttribute key = '<<PIPELINE_REF>>';
+        //    }
+           behavior setContainerImage {
+               statement name { 'registry.gitlab.com/gitlab-org/release-cli:latest' }
+           }
+           // GL:
+           //   release:
+           //         ... FILES NOT SUPPORTED FOR RELEASE IN GL???
+           // GH:
+           //   - uses: ".../action-automatic-releases@latest"
+           //     with:
+           //       files: | 
+           //         path0
+           //         path1
+           behavior setRelease {
+                statement name { '"Automatic Release v<<ENV_VERSION>>"' } // name: ".." || name: ".."
+                statement description { '"Automatic Release v<<ENV_VERSION>>"' } // body: ".." || description: ".."
+                statement repoToken { '<<REPO_TOKEN>>' } // repo_token: ${{ secrets.GITHUB_TOKEN }} || -
+                statement releaseTag { 'v<<ENV_VERSION>>' } // automatic_release_tag: v{{ env.VERSION }} || tag_name: v${VERSION}
+                statement tagMsg { '"Release Tag: v<<ENV_VERSION>>"' } // tag_message: ".."
+                statement draft { 'false' } // draft: false || -
+                statement preRelease { 'false' } // prerelease: false || -
+                statement releaseRef { '<<PIPELINE_REF>>' } // only GL
+                statement makeLatest { 'true' } // only GH
+                // files: Only GH
+                statement path0 { 'version' }
+                statement path1 { 'Readme.txt' }
+                statement path2 { '<<ENV_APP_NAME>>_v<<ENV_VERSION>>.jar' }
+           }
+           // this specific for GitHub only!
+           // variables GL vs GH!!
+           behavior setDownloadArtifact {
+                // if GH => ${{env.APP_NAME}}...
+               statement name { '<<ENV_APP_NAME>>_v<<ENV_VERSION>>' }
+            //    statement dest { 'pub/' }
+           }
+           // NO CACHE NEEDED HERE
+           customAttribute baseOs = '<<BASE_OS_LINUX>>';
+           customAttribute checkoutRef = '<<PIPELINE_REF>>';
+       }
+   
+       swComponent deploy {
+           behavior setStage {
+               statement stage { 'deploy' }
+           }
+           behavior executionScript {
+               statement 0 { '[ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)' }
+               statement 1 { '[ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}' }
+               statement 2 { './gradlew publish --no-daemon' }
+           }
+           // Does not work!
+           // Must have at least 1 statement to be collected
+           // Using swcomponent custom attr as workaround
+        //    behavior setCheckout {
+        //        customAttribute key = '<<PIPELINE_REF>>';
+        //    }
+           behavior setDependencies {
+               statement buildJob { 'build' }
+               statement testJob { 'test' }
+               statement releasePreJob { 'release_pre' }
+               statement releasePostJob { 'release_post' }
+               statement releaseJob { 'release' }
+           }
+           behavior setPermissions {
+               statement contents { 'read' }
+               statement packages { 'write' }
+               statement deployments { 'write' }
+           }
+           // GH:
+           // environment:
+           //   name: Production
+           //   url: ${{ github.repositoryUrl }}
+           // GL: 
+           //  environment:
+           //   name: Production
+           //   url: $CI_REPOSITORY_URL
+           //   action: start
+           //   deployment_tier: production
+           behavior setEnvironment {
+               // both
+               statement name { 'Production' }
+               // GH: <<GIT_REPOSITORY_URL>> == ${{ github.repositoryUrl }}
+               // GL: <<GIT_REPOSITORY_URL>> == $CI_REPOSITORY_URL
+               statement url { '<<GIT_REPOSITORY_URL>>' } // url: ${{ github.repositoryUrl }} || url: $CI_REPOSITORY_URL
+               statement action { 'start' } // GL
+               statement deploymentTier { 'production' }  // only GL
+           }
+           // GitHub only
+           behavior setDownloadArtifact {
+                // variables GL vs GH!!
+                // if GH => ${{env.APP_NAME}}...
+               statement name { '<<ENV_APP_NAME>>_v<<ENV_VERSION>>' }
+            //    statement dest { 'pub/' }
+           }
+           behavior setContainerImage {
+               statement name { 'eclipse-temurin:8u422-b05-jdk' }
+           }
+           // ONLY ONE CACHE PER JOB
+           behavior setCache {
+               statement path0 { '**/*.gradle*' }
+               statement path1 { '**/gradle-wrapper.properties' }
+               customAttribute key = '<<PIPELINE_ID>>';
+           }
+           // If only ref set, use custom attr
+           customAttribute checkoutRef = '<<PIPELINE_REF>>';
+           customAttribute baseOs = '<<BASE_OS_LINUX>>';
+       }
+    }
+}
+
+// Friend package linking the stages
+package executionLogic {
+    initialControlPoint build {
+        ref is_next test
+        ref refers [
+                    cicdRoot.jobs.build.setContainerImage.name,
+                    cicdRoot.jobs.build.setPermissions.contents,
+                    cicdRoot.jobs.build.setCache.path0,
+                    cicdRoot.jobs.build.setCache.path1,
+                    cicdRoot.jobs.build.executionScript.0
+                ]
+    }
+
+    controlPoint test {
+        ref is_next release_pre
+        ref refers [
+                    cicdRoot.jobs.test.setContainerImage.name,
+                    cicdRoot.jobs.test.setDependencies.buildJob,
+                    cicdRoot.jobs.test.setPermissions.contents 
+                ]
+    }
+
+    controlPoint release_pre {
+        ref is_next release_post
+        ref refers [ 
+                    cicdRoot.jobs.release_pre.setContainerImage.name,
+                    cicdRoot.jobs.release_pre.setPermissions.contents,
+                    cicdRoot.jobs.release_pre.setDependencies.buildJob,
+                    cicdRoot.jobs.release_pre.setDependencies.testJob
+                ]
+    }
+
+    controlPoint release_post {
+        ref is_next release
+        ref refers [ 
+                    cicdRoot.jobs.release_post.setContainerImage.name,
+                    cicdRoot.jobs.release_post.setDependencies.buildJob,
+                    cicdRoot.jobs.release_post.setPermissions.contents 
+                ]
+    }
+
+    controlPoint release { 
+        ref is_next deploy
+        ref refers [ 
+                    cicdRoot.jobs.release.setContainerImage.name,
+                    cicdRoot.jobs.release.setDependencies.buildJob,
+                    cicdRoot.jobs.release.setDependencies.testJob,
+                    cicdRoot.jobs.release.setDependencies.releasePreJob,
+                    cicdRoot.jobs.release.setDependencies.releasePostJob,
+                    cicdRoot.jobs.release.setPermissions.contents 
+                ]
+    }
+
+    closingControlPoint deploy {
+        ref refers [
+                    cicdRoot.jobs.test.setContainerImage.name,
+                    cicdRoot.jobs.test.setDependencies.buildJob,
+                    cicdRoot.jobs.test.setPermissions.contents,
+                    cicdRoot.jobs.deploy.setEnvironment.name,
+                    cicdRoot.jobs.deploy.setEnvironment.url
+                ]
+    }
+}
