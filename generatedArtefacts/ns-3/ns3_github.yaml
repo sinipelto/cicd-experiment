@@ -1,0 +1,100 @@
+name: NS-3 Simulation Build and Test Pipeline with Docker Container Build
+
+on:
+  push:
+    branches:
+      - 'master'
+
+
+
+env:
+  GIT_SUBMODULE_STRATEGY: recursive
+  CCACHE_BASEDIR_VALUE: ns-3-ccache-storage
+  CACHE_COMPRESSION_LEVEL: fastest
+  FF_USE_FASTZIP: 1
+  GIT_DEPTH: 0
+  GIT_STRATEGY: clone
+  DOCKERFILE_PATH: ./Dockerfile_demo
+
+jobs:
+  build_docker_container:
+    runs-on: ubuntu-latest
+    container:
+      image: gcr.io/kaniko-project/executor:debug
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: |
+          mkdir -p /kaniko/.docker
+          echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+          /kaniko/executor --cache=true --context . --dockerfile "$DOCKERFILE_PATH" --destination $CI_REGISTRY_IMAGE:${CI_COMMIT_REF_NAME}_demo
+
+  build_sim:
+    runs-on: ubuntu-latest
+    container:
+      image: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}_demo
+    needs:
+      - build_docker_container
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/cache@v4
+        with:
+          key: ${{ github.ref }}
+          path: |
+            '${CCACHE_BASEDIR_VALUE}/'
+      - run: |
+          mkdir -p $CCACHE_BASEDIR_VALUE
+          export CCACHE_BASEDIR=${PWD}
+          export CCACHE_DIR=${PWD}/$CCACHE_BASEDIR_VALUE
+          export PATH="/usr/lib/ccache:$PATH"
+          git submodule foreach "git fetch --unshallow --all --tags || git fetch --all --tags"
+          git submodule foreach "git checkout $(git config -f $toplevel/.gitmodules submodule.$name.branch)"
+          mkdir -p external/vhost-ns3-wrapper/build
+          cmake -S external/vhost-ns3-wrapper -B external/vhost-ns3-wrapper/build -GNinja
+          cmake --build external/vhost-ns3-wrapper/build
+          cmake --build external/vhost-ns3-wrapper/build -t umlKernel ubuntu20-rootfs_target || sleep 3600
+          bash ./ns3-wifi-if-default-config.sh optimized
+          ./waf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ns3-build
+          retention-days: 1
+          path: |
+            external/vhost-ns3-wrapper/build/**
+            !ns-3-ccache-storage/**
+            !.waf*
+            !__pycache__/**
+
+  demo_iperf:
+    runs-on: ubuntu-latest
+    container:
+      image: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}_demo
+    needs:
+      - build_docker_container
+      - build_sim
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: |
+          cd scratch/uml-iperf-experiment
+          bash single_run.sh 1 ${rate} $(pwd)/demo_out/
+          python3 /iperf3Vis/src/run.py --time-interval s --data-directory ./demo_out/pair0 --output ./tp_pair0.png
+          python3 /iperf3Vis/src/run.py --box-plot --time-interval s --data-directory ./demo_out/pair0 --output ./boxplot_tp_pair0.png
+          python3 /iperf3Vis/src/run.py --time-interval s --data-directory ./demo_out/pair1 --output ./tp_pair1.png
+          python3 /iperf3Vis/src/run.py --box-plot --time-interval s --data-directory ./demo_out/pair1 --output ./boxplot_tp_pair1.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perf-results
+          path: |
+            scratch/uml-iperf-experiment/tp_pair0.png
+            scratch/uml-iperf-experiment/boxplot_tp_pair0.png
+            scratch/uml-iperf-experiment/tp_pair1.png
+            scratch/uml-iperf-experiment/boxplot_tp_pair1.png
+            scratch/uml-iperf-experiment/demo_out/pair0/iperf-server0.json
+            scratch/uml-iperf-experiment/demo_out/pair1/iperf-server1.json
+

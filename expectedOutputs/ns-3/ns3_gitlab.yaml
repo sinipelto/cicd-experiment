@@ -1,0 +1,108 @@
+workflow:
+  name: NS-3 Simulation Build and Test Pipeline with Docker Container Build
+
+stages:
+  - .pre
+  - build
+  - test
+
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  CCACHE_BASEDIR_VALUE: ns-3-ccache-storage
+  CACHE_COMPRESSION_LEVEL: fastest
+  FF_USE_FASTZIP: 1
+  GIT_DEPTH: 0
+  GIT_STRATEGY: clone
+  DOCKERFILE_PATH: ./Dockerfile_demo
+
+build_docker_container:
+  stage: .pre
+  tags:
+    - saas-linux-medium-amd64
+  rules:
+    - if: ${CI_PIPELINE_SOURCE} == "push"
+  only:
+    refs:
+      - "master"
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  script:
+    - 'mkdir -p /kaniko/.docker'
+    - 'echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json'
+    - '/kaniko/executor --cache=true --context . --dockerfile "$DOCKERFILE_PATH" --destination $CI_REGISTRY_IMAGE:${CI_COMMIT_REF_NAME}_demo'
+
+build_sim:
+  stage: build
+  tags:
+    - saas-linux-medium-amd64
+  rules:
+    - if: ${CI_PIPELINE_SOURCE} == "push"
+  only:
+    refs:
+      - "master"
+  image:
+    name: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}_demo
+  needs:
+    - build_docker_container
+  cache:
+    - key: ${CI_COMMIT_BRANCH}
+      paths:
+        - ${CCACHE_BASEDIR_VALUE}/
+  script:
+    - 'mkdir -p $CCACHE_BASEDIR_VALUE'
+    - 'export CCACHE_BASEDIR=${PWD}'
+    - 'export CCACHE_DIR=${PWD}/$CCACHE_BASEDIR_VALUE'
+    - 'export PATH="/usr/lib/ccache:$PATH"'
+    - 'git submodule foreach "git fetch --unshallow --all --tags || git fetch --all --tags"'
+    - 'git submodule foreach "git checkout $(git config -f $toplevel/.gitmodules submodule.$name.branch)"'
+    - 'mkdir -p external/vhost-ns3-wrapper/build'
+    - 'cmake -S external/vhost-ns3-wrapper -B external/vhost-ns3-wrapper/build -GNinja'
+    - 'cmake --build external/vhost-ns3-wrapper/build'
+    - 'cmake --build external/vhost-ns3-wrapper/build -t umlKernel ubuntu20-rootfs_target || sleep 3600'
+    - 'bash ./ns3-wifi-if-default-config.sh optimized'
+    - './waf'
+  artifacts:
+    when: on_success
+    untracked: true
+    expire_in: 8h
+    paths:
+      - external/vhost-ns3-wrapper/build/**
+    exclude:
+      - ns-3-ccache-storage/**
+      - .waf*
+      - __pycache__/**
+
+demo_iperf:
+  stage: test
+  tags:
+    - saas-linux-medium-amd64
+  rules:
+    - if: ${CI_PIPELINE_SOURCE} == "push"
+  only:
+    refs:
+      - "master"
+  image:
+    name: ${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}_demo
+  needs:
+    - build_docker_container
+    - build_sim
+  timeout: 2h
+  retry: 2
+  script:
+    - 'cd scratch/uml-iperf-experiment'
+    - 'bash single_run.sh 1 ${rate} $(pwd)/demo_out/'
+    - 'python3 /iperf3Vis/src/run.py --time-interval s --data-directory ./demo_out/pair0 --output ./tp_pair0.png'
+    - 'python3 /iperf3Vis/src/run.py --box-plot --time-interval s --data-directory ./demo_out/pair0 --output ./boxplot_tp_pair0.png'
+    - 'python3 /iperf3Vis/src/run.py --time-interval s --data-directory ./demo_out/pair1 --output ./tp_pair1.png'
+    - 'python3 /iperf3Vis/src/run.py --box-plot --time-interval s --data-directory ./demo_out/pair1 --output ./boxplot_tp_pair1.png'
+  artifacts:
+    when: on_success
+    untracked: false
+    paths:
+      - scratch/uml-iperf-experiment/tp_pair0.png
+      - scratch/uml-iperf-experiment/boxplot_tp_pair0.png
+      - scratch/uml-iperf-experiment/tp_pair1.png
+      - scratch/uml-iperf-experiment/boxplot_tp_pair1.png
+      - scratch/uml-iperf-experiment/demo_out/pair0/iperf-server0.json
+      - scratch/uml-iperf-experiment/demo_out/pair1/iperf-server1.json

@@ -8,7 +8,7 @@ interface JobSpecification {
   name: string;              // name of the job
   stage: string             // stage of the job
   commands: Map<string, string>;      // commands/scripts to be executed in this job
-  image: string;             // container image name
+  image: Map<string, string>;             // container image
   permissions: Map<string, string>;       // permissions (only in github)
   dependencies: string[];    // dependencies (only in gitlab)
   caches: Array<Map<string, string | string[]>>   // List of cache configurations
@@ -19,11 +19,14 @@ interface JobSpecification {
   outputs: Map<string, string> // collect outputs from jobs
   upArtifact: Map<string, string>;      // artifacts to upload
   upArtifactPaths: string[];      // artifact paths to upload
+  upArtifactExcludes: string[];      // artifact paths to exclude
   downArtifact: Map<string, string>;    // artifacts to download
   environment: Map<string, string>;   // release environment
   release: Map<string, string>; // release configuration
   releasePaths: string[]    // files to include in the release
   reportArtifact: Map<string, string> // GL: report e.g. dotenv file to pass variables
+  timeout: number // Job timeout
+  retry: number // Job retry count
 }
 
 interface GlobalConfig {
@@ -84,7 +87,7 @@ enum Keyword {
  * @returns 
  */
 function getJobSWComponentsOf(rootName: string): string {
-  return `match (p:Package {name: '${rootName}'})-[:OWNEDRELATIONSHIP]->(q:Package {name: '${SubPackageKeyword.jobs}'})-[:OWNEDRELATIONSHIP]->(s:SWComponentUsage) return s.name, s.baseOs, s.checkoutRef`
+  return `match (p:Package {name: '${rootName}'})-[:OWNEDRELATIONSHIP]->(q:Package {name: '${SubPackageKeyword.jobs}'})-[:OWNEDRELATIONSHIP]->(s:SWComponentUsage) return s.name, s.baseOs, s.checkoutRef, s.timeout, s.retry`
 }
 
 function getJobSWBehaviorStatementsOf(rootName: string, jobName: string, behaviorName: string): string {
@@ -168,6 +171,21 @@ function serJobGitLab(jobConf: JobSpecification, globalConf: GlobalConfig): stri
     if (globalConf.onPush.get(ConfigKeyword.incBranch)?.length || globalConf.onPush.get(ConfigKeyword.incFile)?.length) {
       str += '\n  ';
       str += expandToString`
+        rules:
+            - if: \${CI_PIPELINE_SOURCE} == "push"
+      `;
+
+      // if (globalConf.onPush.get(ConfigKeyword.incFile)?.length) {
+      //   str += '\n      ';
+      //   str += expandToString`
+      //     changes:
+      //           paths:
+      //             ${'- ' + globalConf.onPush.get(ConfigKeyword.incFile)!.reverse().map((x) => '\"' + x + '\"').join('\n- ')}
+      //   `;
+      // }
+
+      str += '\n  ';
+      str += expandToString`
         only:
       `;
 
@@ -175,14 +193,14 @@ function serJobGitLab(jobConf: JobSpecification, globalConf: GlobalConfig): stri
         str += '\n    ';
         str += expandToString`
           refs:
-                ${'- ' + globalConf.onPush.get(ConfigKeyword.incBranch)!.reverse().map(x => '\'' + x + '\'').join('\n- ')}
+                ${'- ' + globalConf.onPush.get(ConfigKeyword.incBranch)!.reverse().map(x => '\"' + x +'\"').join('\n- ')}
         `;
       }
       if (globalConf.onPush.get(ConfigKeyword.incFile)?.length) {
         str += '\n    ';
         str += expandToString`
           changes:
-                ${'- ' + globalConf.onPush.get(ConfigKeyword.incFile)!.reverse().map((x) => '\'' + x + '\'').join('\n- ')}
+                ${'- ' + globalConf.onPush.get(ConfigKeyword.incFile)!.reverse().map((x) => '\"' + x + '\"').join('\n- ')}
         `;
       }
     }
@@ -196,7 +214,7 @@ function serJobGitLab(jobConf: JobSpecification, globalConf: GlobalConfig): stri
         str += '\n    ';
         str += expandToString`
           refs:
-                ${'- ' + globalConf.onPush.get(ConfigKeyword.excBranch)!.reverse().map(x => '\'' + x + '\'').join('\n- ')}
+                ${'- ' + globalConf.onPush.get(ConfigKeyword.excBranch)!.reverse().map(x => '\"' + x + '\"').join('\n- ')}
         `;
       }
 
@@ -204,18 +222,26 @@ function serJobGitLab(jobConf: JobSpecification, globalConf: GlobalConfig): stri
         str += '\n    ';
         str += expandToString`
           changes:
-                ${'- ' + globalConf.onPush.get(ConfigKeyword.excFile)!.reverse().map((x) => '\'' + x + '\'').join('\n- ')}
+                ${'- ' + globalConf.onPush.get(ConfigKeyword.excFile)!.reverse().map((x) => '\"' + x + '\"').join('\n- ')}
         `;
       }
     }
   }
 
-  if (jobConf?.image?.length) {
+  if (jobConf?.image?.size) {
     str += '\n  ';
     str += expandToString`
       image:
-          name: ${jobConf.image}
+          name: ${jobConf.image.get('name')}
     `;
+
+    if (jobConf?.image.has('entryPoint')) {
+      str += '\n    ';
+      str += expandToString`
+        entrypoint: ${jobConf.image.get('entryPoint')}
+      `;
+    }
+
   }
 
   if (jobConf.dependencies?.length) {
@@ -231,16 +257,47 @@ function serJobGitLab(jobConf: JobSpecification, globalConf: GlobalConfig): stri
     str += expandToString`
       cache:
     `;
+
     for (const cache of jobConf.caches) {
       str += '\n    ';
       str += expandToString`
         - key: ${cache.get('key')}
-              when: on_success
-              untracked: false
-              paths:
-                ${'- ' + (cache.get('paths') as string[]).reverse().map(x => '\'' + x + '\'').join('\n- ')}
+      `;
+
+      if (cache.has('when')) {
+        str += '\n      ';
+        str += expandToString`
+          when: ${cache.get('when')}
+        `;
+      }
+
+      if (cache.has('untracked')) {
+        str += '\n      ';
+        str += expandToString`
+          untracked: ${cache.get('untracked')}
+        `;
+      }
+
+      str += '\n      ';
+      str += expandToString`
+        paths:
+                ${'- ' + (cache.get('paths') as string[]).reverse().join('\n- ')}
       `;
     }
+  }
+
+  if (jobConf?.timeout) {
+    str += '\n  ';
+    str += expandToString`
+      timeout: ${jobConf.timeout} minutes
+    `;
+  }
+
+  if (jobConf?.retry) {
+    str += '\n  ';
+    str += expandToString`
+      retry: ${jobConf.retry}
+    `;
   }
 
   // if (jobConf.cacheKey?.length && jobConf.cachePaths?.length) {
@@ -329,6 +386,14 @@ function serJobGitLab(jobConf: JobSpecification, globalConf: GlobalConfig): stri
       str += expandToString`
         paths:
               ${'- ' + jobConf.upArtifactPaths.reverse().join('\n- ')}
+      `;
+    }
+
+    if (jobConf.upArtifactExcludes?.length) {
+      str += '\n    ';
+      str += expandToString`
+        exclude:
+              ${'- ' + jobConf.upArtifactExcludes.reverse().join('\n- ')}
       `;
     }
   }
@@ -428,7 +493,7 @@ function serTriggersGithub(globalConf: GlobalConfig): string {
 
   let ret: string = expandToString`on:`;
 
-  if (globalConf.onPush?.size) {
+  if (globalConf.onPush?.size && Array.from(globalConf.onPush?.values()).some(e => e?.length)) {
     ret += '\n  ';
     ret += expandToString`push:`;
 
@@ -449,7 +514,7 @@ function serTriggersGithub(globalConf: GlobalConfig): string {
     }
   }
 
-  if (globalConf.onPR?.size) {
+  if (globalConf.onPR?.size && Array.from(globalConf.onPR?.values()).some(e => e?.length)) {
     ret += '\n  ';
     ret += expandToString`pull_request:`;
 
@@ -505,14 +570,20 @@ function serJobGithub(header: boolean, jobConf: JobSpecification, globalConf: Gl
 
   ret += expandToString`
     ${jobConf.name}:
-        runs-on: ${jobConf.baseOs}
   `;
 
-  if (jobConf?.image?.length) {
+  if (jobConf?.baseOs?.length) {
+    ret += '\n    ';
+    ret += expandToString`
+      runs-on: ${jobConf.baseOs}
+    `;
+  }
+
+  if (jobConf?.image?.size) {
     ret += '\n    ';
     ret += expandToString`
       container:
-            image: ${jobConf.image}
+            image: ${jobConf.image.get('name')}
     `;
   }
 
@@ -532,6 +603,21 @@ function serJobGithub(header: boolean, jobConf: JobSpecification, globalConf: Gl
     `;
   }
 
+  if (jobConf?.timeout) {
+      ret += '\n    ';
+      ret += expandToString`
+        timeout-minutes: ${jobConf.timeout}
+      `;
+  }
+
+  // NOT SUPPORTED IN GHA!!!
+  // if (jobConf?.retry) {
+  //     ret += '\n    ';
+  //     ret += expandToString`
+  //       max_attempts: ${jobConf.retry}
+  //     `;
+  // }
+
   // Environment (not steps/script)  
   if (jobConf.environment.size) {
     ret += '\n    ';
@@ -545,9 +631,6 @@ function serJobGithub(header: boolean, jobConf: JobSpecification, globalConf: Gl
         url: ${jobConf.environment.get('url')}
       `;
     }
-  }
-
-  if (jobConf.outputs?.size) {
   }
 
   // Determine if we need steps
@@ -715,6 +798,13 @@ function serJobGithub(header: boolean, jobConf: JobSpecification, globalConf: Gl
       path: |
                   ${jobConf.upArtifactPaths.reverse().join('\n')}
     `;
+
+    if (jobConf?.upArtifactExcludes?.length) {
+      ret += '\n            ';
+      ret += expandToString`
+                  ${jobConf.upArtifactExcludes.reverse().map(x => '!' + x).join('\n            ')}
+      `;
+    }
   }
 
   // Release (not stesps/script)
@@ -853,14 +943,17 @@ export async function generateCICDConf(packageRoot: string, targetPlatform: stri
       jobs.push({
         name: singleRecord.get('s.name'),
         checkoutRef: singleRecord.get('s.checkoutRef'),
+        timeout: singleRecord.get('s.timeout'),
+        retry: singleRecord.get('s.retry'),
         commands: new Map<string, string>,
-        image: '',
+        image: new Map<string, string>,
         stage: '',
         permissions: new Map<string, string>,
         dependencies: [],
         baseOs: baseOs,
         upArtifact: new Map<string, string>,
         upArtifactPaths: [],
+        upArtifactExcludes: [],
         release: new Map<string, string>,
         releasePaths: [],
         downArtifact: new Map<string, string>,
@@ -907,11 +1000,14 @@ export async function generateCICDConf(packageRoot: string, targetPlatform: stri
       case ConfigKeyword.PR:
         for (const kw of Object.values(ConfigKeyword)) {
           const configSwStmts = await neo4jInterface.queryNodes(getSWBehaviorOfSWStatementsOf(packageRoot, ConfigKeyword.configRoot, confEntryName, kw));
-          if (configSwStmts == undefined) break;
+          if (!configSwStmts) break;
           globalConfig.onPR.set(kw, []);
           for (const stmt of configSwStmts) {
-            if (stmt == undefined) continue;
-            globalConfig.onPR.get(kw)?.push(stmt.get('e.expression'));
+            if (!stmt) continue;
+            const val = stmt.get('e.expression');
+            if (val?.length) {
+              globalConfig.onPR.get(kw)?.push(val);
+            }
           }
         }
         break;
@@ -1012,9 +1108,11 @@ export async function generateCICDConf(packageRoot: string, targetPlatform: stri
           if (!stmts.length) break;
           for (const stmt of stmts) {
             if (!stmt) continue;
-            jobs[i].image = stmt.get('e.expression');
-            // There is only one image expression expected
-            break;
+            const key: string = stmt.get('e.name');
+            const val: string = stmt.get('e.expression');
+            if (key?.length) {
+              jobs[i].image.set(key, val);
+            }
           }
           break;
         case JobBehaviorKeyword.buildArtifact:
@@ -1028,6 +1126,9 @@ export async function generateCICDConf(packageRoot: string, targetPlatform: stri
             // build artifact pathX
             if (key.startsWith('path')) {
               jobs[i].upArtifactPaths.push(val);
+            }
+            else if (key.startsWith('exclude')) {
+              jobs[i].upArtifactExcludes.push(val);
             }
             // artifact general properties
             else {
@@ -1102,8 +1203,8 @@ export async function generateCICDConf(packageRoot: string, targetPlatform: stri
               let mapp: Map<string, string> = jobs[i].libraries.find(p => (p?.get('id') ?? '') == behaviorName) ?? new Map<string, string>();
               if (!mapp?.size) jobs[i].libraries.push(mapp);
               mapp?.set('id', behaviorName);
-              if (lname) mapp.set('lib_name', lname);
-              if (lver) mapp.set('lib_version', lver);
+              if (lname?.length) mapp.set('lib_name', lname);
+              if (lver?.length) mapp.set('lib_version', lver);
               if (key?.length && val?.length) mapp.set(key, val);
             }
             break;
@@ -1117,6 +1218,7 @@ export async function generateCICDConf(packageRoot: string, targetPlatform: stri
             for (const stmt of stmts) {
               if (!stmt) continue;
               const key: string = stmt.get('b.key');
+              const name: string = stmt.get('e.name');
               const val: string = stmt.get('e.expression');
               let mapp: Map<string, string | string[]> = jobs[i].caches.find(p => (p?.get('id') ?? '') == behaviorName) ?? new Map<string, string | string[]>();
               if (!mapp?.size) jobs[i].caches.push(mapp);
@@ -1128,8 +1230,16 @@ export async function generateCICDConf(packageRoot: string, targetPlatform: stri
                 // jobs[i].cacheKey = key;
                 hasKey = true;
               }
+              // statement when: ...
+              if (name?.length && name == 'when' && val?.length) {
+                mapp.set('when', val);               
+              }
+              // statement when: ...
+              else if (name?.length && name == 'untracked' && val?.length) {
+                mapp.set('untracked', val);               
+              }
               // statement pathX
-              if (val?.length) {
+              else if (name?.length && name.startsWith('path') && val?.length) {
                 (mapp?.get('paths') as string[]).push(val);
                 // jobs[i].cachePaths.push(val);
               }
