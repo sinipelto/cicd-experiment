@@ -1,0 +1,196 @@
+// CICD root package
+package netSimCicd {
+    // Pipeline metadata
+    package meta {
+       customAttribute doc = 'NS-3 Simulation Build and Test Pipeline with Docker Container Build';
+    }
+
+    // Pipeline configuration
+    swComponent configurePipeline {
+        // rules:
+        // - if: ${CI_PIPELINE_SOURCE} == "push"
+        swComponent onPush {
+            behavior includeBranches {
+                statement master { 'master' }
+            }
+        }
+
+        // Global variables from GitLab CI
+        behavior setGlobalVariables {
+            statement git_submodule_strategy { 'recursive' }
+            statement ccache_basedir_value { 'ns-3-ccache-storage' }
+            statement cache_compression_level { 'fastest' }
+            statement ff_use_fastzip { '1' }
+            statement git_depth { '0' }
+            statement git_strategy { 'clone' }
+            statement dockerfile_path { './Dockerfile_demo' }
+        }
+    }
+
+    package jobs {
+        swComponent build_docker_container {
+            behavior setStage {
+                statement name { '.pre' }
+            }
+
+            behavior setCheckout {
+                statement depth { '0' } // GH
+            }
+
+            behavior executionScript {
+                statement 0 { 'mkdir -p /kaniko/.docker' }
+                statement 1 { 'echo "{\\\\"auths\\\\":{\\\\"$CI_REGISTRY\\\\":{\\\\"username\\\\":\\\\"$CI_REGISTRY_USER\\\\",\\\\"password\\\\":\\\\"$CI_REGISTRY_PASSWORD\\\\"}}}" > /kaniko/.docker/config.json' }
+                statement 2 { '/kaniko/executor --cache=true --context . --dockerfile "$DOCKERFILE_PATH" --destination $CI_REGISTRY_IMAGE:${CI_COMMIT_REF_NAME}_demo' }
+            }
+            behavior setContainerImage {
+                statement name { 'gcr.io/kaniko-project/executor:debug' }
+                statement entryPoint { '\[\"\"\]' }
+            }
+
+            customAttribute baseOs = '<<BASE_OS_LINUX>>';
+	        // customAttribute checkoutRef = '<<PIPELINE_ID>>';
+        }
+
+        swComponent build_sim {
+            behavior setStage {
+                statement name { 'build' }
+            }
+
+            behavior setCheckout {
+                statement depth { '0' } // GH
+            }
+
+            behavior executionScript {
+                statement 0 { 'mkdir -p $CCACHE_BASEDIR_VALUE' }
+                statement 1 { 'export CCACHE_BASEDIR=${PWD}' }
+                statement 2 { 'export CCACHE_DIR=${PWD}/$CCACHE_BASEDIR_VALUE' }
+                statement 3 { 'export PATH="/usr/lib/ccache:$PATH"' }
+                statement 4 { 'git submodule foreach "git fetch --unshallow --all --tags || git fetch --all --tags"' }
+                statement 5 { 'git submodule foreach "git checkout $(git config -f $toplevel/.gitmodules submodule.$name.branch)"' }
+                statement 6 { 'mkdir -p external/vhost-ns3-wrapper/build' }
+                statement 7 { 'cmake -S external/vhost-ns3-wrapper -B external/vhost-ns3-wrapper/build -GNinja' }
+                statement 8 { 'cmake --build external/vhost-ns3-wrapper/build' }
+                statement 9 { 'cmake --build external/vhost-ns3-wrapper/build -t umlKernel ubuntu20-rootfs_target || sleep 3600' }
+                statement 10 { 'bash ./ns3-wifi-if-default-config.sh optimized' }
+                statement 11 { './waf' }
+            }
+
+            behavior setCache {
+                statement path0 { '${CCACHE_BASEDIR_VALUE}/' }
+                customAttribute key = '<<PIPELINE_REF>>';
+            }
+
+            behavior setDependencies {
+                statement dockerBuild { 'build_docker_container' }
+            }
+
+            behavior setContainerImage {
+                statement name { '${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}_demo' }
+            }
+
+            behavior setBuildArtifact {
+                statement path0 { 'external/vhost-ns3-wrapper/build/**' }
+                statement exclude0  { 'ns-3-ccache-storage/**' }
+                statement exclude1 { '.waf*' }
+                statement exclude2 { '__pycache__/**' }
+                statement name { 'ns3-build' }
+                statement untracked { 'true' }
+                statement expiryIn  { '1' } // TODO 8 h
+            }
+
+            customAttribute baseOs = '<<BASE_OS_LINUX>>';
+	        // customAttribute checkoutRef = '<<PIPELINE_ID>>';
+        }
+
+        swComponent demo_iperf {
+            behavior setStage {
+                statement name { 'test' }
+            }
+
+            behavior setCheckout {
+                statement depth { '0' } // GH
+            }
+
+            behavior executionScript {
+                statement 0 { 'cd scratch/uml-iperf-experiment' }
+                statement 1 { 'bash single_run.sh 1 ${rate} $(pwd)/demo_out/' }
+                statement 2 { 'python3 /iperf3Vis/src/run.py --time-interval s --data-directory ./demo_out/pair0 --output ./tp_pair0.png' }
+                statement 3 { 'python3 /iperf3Vis/src/run.py --box-plot --time-interval s --data-directory ./demo_out/pair0 --output ./boxplot_tp_pair0.png' }
+                statement 4 { 'python3 /iperf3Vis/src/run.py --time-interval s --data-directory ./demo_out/pair1 --output ./tp_pair1.png' }
+                statement 5 { 'python3 /iperf3Vis/src/run.py --box-plot --time-interval s --data-directory ./demo_out/pair1 --output ./boxplot_tp_pair1.png' }
+            }
+
+            behavior setDependencies {
+                statement dockerBuild { 'build_docker_container' }
+                statement buildSim { 'build_sim' }
+				// below Should be on per-statement = per-job level, not all jobs
+                // customAttribute optional = 'true';
+            }
+
+            behavior setContainerImage {
+                statement name { '${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_NAME}_demo' }
+            }
+
+            behavior setBuildArtifact {
+                statement path0 { 'scratch/uml-iperf-experiment/tp_pair0.png' }
+                statement path1 { 'scratch/uml-iperf-experiment/boxplot_tp_pair0.png' }
+                statement path2 { 'scratch/uml-iperf-experiment/tp_pair1.png' }
+                statement path3 { 'scratch/uml-iperf-experiment/boxplot_tp_pair1.png' }
+                statement path4 { 'scratch/uml-iperf-experiment/demo_out/pair0/iperf-server0.json' }
+                statement path5 { 'scratch/uml-iperf-experiment/demo_out/pair1/iperf-server1.json' }
+                statement name { 'perf-results' }
+                statement untracked { 'false' }
+            }
+
+            customAttribute timeout = '120';
+            customAttribute retry = '2';
+
+			// Needed+
+            // customAttribute rate = '6';
+
+            customAttribute baseOs = '<<BASE_OS_LINUX>>';
+	        // customAttribute checkoutRef = '<<PIPELINE_ID>>';
+        }
+    }
+}
+
+// Friend package linking the stages
+package netSimExecutionLogic {
+    initialControlPoint build_docker {
+        ref is_next build_sim
+        ref refers [
+            netSimCicd.jobs.build_docker_container.executionScript.0,
+            netSimCicd.jobs.build_docker_container.executionScript.1,
+            netSimCicd.jobs.build_docker_container.executionScript.2
+        ]
+    }
+
+    controlPoint build_sim {
+        ref is_next demo_iperf
+        ref refers [
+            netSimCicd.jobs.build_sim.executionScript.0,
+            netSimCicd.jobs.build_sim.executionScript.1,
+            netSimCicd.jobs.build_sim.executionScript.2,
+            netSimCicd.jobs.build_sim.executionScript.3,
+            netSimCicd.jobs.build_sim.executionScript.4,
+            netSimCicd.jobs.build_sim.executionScript.5,
+            netSimCicd.jobs.build_sim.executionScript.6,
+            netSimCicd.jobs.build_sim.executionScript.7,
+            netSimCicd.jobs.build_sim.executionScript.8,
+            netSimCicd.jobs.build_sim.executionScript.9,
+            netSimCicd.jobs.build_sim.executionScript.10,
+            netSimCicd.jobs.build_sim.executionScript.11
+        ]
+    }
+
+    closingControlPoint demo_iperf {
+        ref refers [
+            netSimCicd.jobs.demo_iperf.executionScript.0,
+            netSimCicd.jobs.demo_iperf.executionScript.1,
+            netSimCicd.jobs.demo_iperf.executionScript.2,
+            netSimCicd.jobs.demo_iperf.executionScript.3,
+            netSimCicd.jobs.demo_iperf.executionScript.4,
+            netSimCicd.jobs.demo_iperf.executionScript.5
+        ]
+    }
+}
