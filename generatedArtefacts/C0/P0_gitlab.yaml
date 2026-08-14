@@ -25,7 +25,6 @@ checkIfTestNeeded:
     refs:
       - '*'
   script:
-    - 'echo "Executing Job: checkIfTestNeeded"'
     - '# - Push events: Skip tests if only docs/config files changed'
     - '# - Pull requests: Skip if the same commit was already tested on push'
     - '# - Other events: Run tests for safety'
@@ -113,7 +112,6 @@ buildAndTest:
       paths:
         - '~/.nuget/packages'
   script:
-    - 'echo "Executing Job: buildAndTest"'
     - 'chmod +x build.sh'
     - './build.sh --target=Build --configuration=${BUILD_CONFIGURATION}'
     - './build.sh --target=Test --configuration=${BUILD_CONFIGURATION}'

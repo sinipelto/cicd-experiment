@@ -37,7 +37,6 @@ build:
         - '**/*.gradle*'
         - '**/gradle-wrapper.properties'
   script:
-    - 'echo "Executing Job: build"'
     - './gradlew build --no-daemon'
 
 test:
@@ -65,7 +64,6 @@ test:
         - '**/*.gradle*'
         - '**/gradle-wrapper.properties'
   script:
-    - 'echo "Executing Job: test"'
     - './gradlew test --no-daemon'
 
 release_pre:
@@ -87,7 +85,6 @@ release_pre:
     - build
     - test
   script:
-    - 'echo "Executing Job: release_pre"'
     - 'chmod +x version.sh'
     - 'VERSION_OLD=$(cat version)'
     - 'VERSION=$(./version.sh $VERSION_OLD)'
@@ -135,7 +132,6 @@ release_post:
         - '**/*.gradle*'
         - '**/gradle-wrapper.properties'
   script:
-    - 'echo "Executing Job: release_post"'
     - '[ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)'
     - '[ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}'
     - './gradlew jar --no-daemon'
@@ -172,7 +168,6 @@ release:
     - release_pre
     - release_post
   script:
-    - 'echo "Executing Job: release"'
     - '[ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)'
     - '[ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}'
     - 'true'
@@ -212,7 +207,6 @@ deploy:
         - '**/*.gradle*'
         - '**/gradle-wrapper.properties'
   script:
-    - 'echo "Executing Job: deploy"'
     - '[ -n "${GITHUB_ENV}" ] && VERSION=$(cat version)'
     - '[ -n "${GITHUB_ENV}" ] && echo "VERSION=$VERSION" >> ${GITHUB_ENV:-build.env}'
     - './gradlew publish --no-daemon'
