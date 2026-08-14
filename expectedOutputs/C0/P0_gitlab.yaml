@@ -19,7 +19,7 @@ variables:
   PASSWORD: ${AZ_NRUUVITAG_PASS}
   IMAGE_NAME: ${IMAGE_NAME}
 
-check-test-needed:
+checkIfTestNeeded:
   stage: check_test_needed
   only:
     refs:
@@ -81,7 +81,7 @@ check-test-needed:
     reports:
       dotenv: build.env
 
-build-and-test:
+buildAndTest:
   stage: build_and_test
   only:
     refs:

@@ -28,7 +28,7 @@ env:
   IMAGE_NAME: ${{ secrets.IMAGE_NAME }}
 
 jobs:
-  check-test-needed:
+  checkIfTestNeeded:
     runs-on: ubuntu-latest
     outputs:
       should-test: ${{ steps.check.outputs.should-test }}
@@ -93,7 +93,7 @@ jobs:
             echo "Other event: Running tests"
           fi
 
-  build-and-test:
+  buildAndTest:
     runs-on: ubuntu-latest
     needs: check-test-needed
     if: |
