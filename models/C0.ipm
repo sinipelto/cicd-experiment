@@ -42,6 +42,8 @@ package nRuuviTagPipeline {
 		}
 
 		behavior setGlobalVariables {
+            statement git_depth { '0' }
+            statement git_submodule_strategy { 'recursive' }
 			statement target_branch { '<<VAR_TARGET_DEPLOYMENT_BRANCH>>' }
 			statement cake_version { '<<VAR_CAKE_VERSION>>' }
 			statement build_configuration { '<<VAR_BUILD_CONFIGURATION>>' }

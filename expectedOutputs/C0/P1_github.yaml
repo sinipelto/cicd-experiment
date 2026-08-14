@@ -16,6 +16,8 @@ permissions:
   packages: write
 
 env:
+  GIT_DEPTH: 0
+  GIT_SUBMODULE_STRATEGY: recursive
   TARGET_BRANCH: ${{ vars.TARGET_DEPLOYMENT_BRANCH }}
   CAKE_VERSION: ${{ vars.CAKE_VERSION }}
   BUILD_CONFIGURATION: ${{ vars.BUILD_CONFIGURATION }}
