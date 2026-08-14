@@ -87,7 +87,7 @@ buildAndTest:
     refs:
       - '*'
   needs:
-    - check-test-needed
+    - checkIfTestNeeded
   rules:
     - if: '${SHOULD_TEST} == "true"'
   cache:

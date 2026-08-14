@@ -95,9 +95,9 @@ jobs:
 
   buildAndTest:
     runs-on: ubuntu-latest
-    needs: check-test-needed
+    needs: checkIfTestNeeded
     if: |
-      needs.check-test-needed.outputs.should-test == 'true'
+      needs.checkIfTestNeeded.outputs.should-test == 'true'
     
     steps:
       - uses: actions/checkout@v5
