@@ -63,9 +63,10 @@ build_sim:
     - 'bash ./ns3-wifi-if-default-config.sh optimized'
     - './waf'
   artifacts:
+    name: ns3-build
     when: on_success
     untracked: true
-    expire_in: 8h
+    expire_in: 1 days
     paths:
       - external/vhost-ns3-wrapper/build/**
     exclude:
@@ -87,7 +88,7 @@ demo_iperf:
   needs:
     - build_docker_container
     - build_sim
-  timeout: 2h
+  timeout: 120 minutes
   retry: 2
   script:
     - 'cd scratch/uml-iperf-experiment'
@@ -97,6 +98,7 @@ demo_iperf:
     - 'python3 /iperf3Vis/src/run.py --time-interval s --data-directory ./demo_out/pair1 --output ./tp_pair1.png'
     - 'python3 /iperf3Vis/src/run.py --box-plot --time-interval s --data-directory ./demo_out/pair1 --output ./boxplot_tp_pair1.png'
   artifacts:
+    name: perf-results
     when: on_success
     untracked: false
     paths:

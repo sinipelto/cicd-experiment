@@ -91,7 +91,6 @@ demo_iperf:
   timeout: 120 minutes
   retry: 2
   script:
-    - 'echo "Executing Job: demo_iperf"'
     - 'cd scratch/uml-iperf-experiment'
     - 'bash single_run.sh 1 ${rate} $(pwd)/demo_out/'
     - 'python3 /iperf3Vis/src/run.py --time-interval s --data-directory ./demo_out/pair0 --output ./tp_pair0.png'
