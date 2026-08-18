@@ -28,7 +28,6 @@ build_docker_container:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
   script:
-    - 'echo "Executing Job: build_docker_container"'
     - 'mkdir -p /kaniko/.docker'
     - 'echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json'
     - '/kaniko/executor --cache=true --context . --dockerfile "$DOCKERFILE_PATH" --destination $CI_REGISTRY_IMAGE:${CI_COMMIT_REF_NAME}_demo'
@@ -51,7 +50,6 @@ build_sim:
       paths:
         - ${CCACHE_BASEDIR_VALUE}/
   script:
-    - 'echo "Executing Job: build_sim"'
     - 'mkdir -p $CCACHE_BASEDIR_VALUE'
     - 'export CCACHE_BASEDIR=${PWD}'
     - 'export CCACHE_DIR=${PWD}/$CCACHE_BASEDIR_VALUE'
