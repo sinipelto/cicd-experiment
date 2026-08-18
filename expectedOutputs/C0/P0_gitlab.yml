@@ -21,6 +21,8 @@ variables:
 
 checkIfTestNeeded:
   stage: check_test_needed
+  tags:
+    - saas-linux-medium-amd64
   only:
     refs:
       - '*'
@@ -83,6 +85,8 @@ checkIfTestNeeded:
 
 buildAndTest:
   stage: build_and_test
+  tags:
+    - saas-linux-medium-amd64
   only:
     refs:
       - '*'
