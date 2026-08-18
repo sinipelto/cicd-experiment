@@ -318,12 +318,13 @@ function serJobGitLab(jobConf: JobSpecification, globalConf: GlobalConfig): stri
   // }
 
   // SCRIPT WITH AT LEAST ONE STATEMENT IS ALWAYS REQUIRED IN GL!!!!
-  // WORKAROUND: Echo something in every script
+  if (!jobConf?.commands?.size) {
+    throw new Error('ERROR: Job ' + jobConf.name + ' has no commands. This is a required field in GitLab.');
+  }
   str += '\n  ';
   str += expandToString`
     script:
-        - 'echo "Executing Job: ${jobConf.name}"'
-        ${(jobConf?.commands?.size) ? '- ' + Array.from(new Map([...jobConf.commands].sort( (a,b) => parseInt(a[0]) - parseInt(b[0]) )).values()).map(x => '\'' + x + '\'').join('\n- ') : ''}
+        ${'- ' + Array.from(new Map([...jobConf.commands].sort( (a,b) => parseInt(a[0]) - parseInt(b[0]) )).values()).map(x => '\'' + x + '\'').join('\n- ')}
   `;
 
   if ((jobConf.upArtifact?.size && jobConf.upArtifactPaths?.length) || jobConf.reportArtifact?.size) {
@@ -725,6 +726,10 @@ function serJobGithub(header: boolean, jobConf: JobSpecification, globalConf: Gl
         `;
       }
     }
+  }
+
+  if (!jobConf.commands?.size) {
+    throw new Error('ERROR: Job ' + jobConf.name + ' has no commands. This is a required field in GitHub.');
   }
 
   if (jobConf.commands?.size) {
