@@ -1,5 +1,5 @@
 root = true
 
-[*.{yml,yaml}]
+[*.{yml,yaml,sh,ipm}]
 end_of_line = lf
 insert_final_newline = true
