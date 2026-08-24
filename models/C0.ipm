@@ -119,12 +119,12 @@ package nRuuviTagPipeline {
 				statement 39 { '    --status success \\  ' }
 				statement 40 { '    --limit 10 \\ ' }
 				statement 41 { '    --json headSha,conclusion \\ ' }
-				statement 42 { '    --jq ".[] | select(.headSha == \\"$COMMIT_SHA\\" and .conclusion == \\"success\\") | .headSha" || echo "")' }
+				statement 42 { '    --jq ".[] | select(.headSha == \\\\"$COMMIT_SHA\\\\" and .conclusion == \\\\"success\\\\") | .headSha" || echo "")' }
 				statement 43 { '  [[ <<CI_SERVER_URL>> == *gitlab* ]] && { \\ ' }
 				statement 44 { '    API_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/pipelines?sha=${COMMIT_SHA}&status=success&per_page=10"; \\ ' }
-				statement 45 { '    AUTH_HEADER=("JOB-TOKEN: ${CI_JOB_TOKEN}"); \\ ' }
-				statement 46 { '    RESP="$(curl --silent --show-error --fail -H "${AUTH_HEADER[0]}" "${API_URL}" || true)"; \\ ' }
-				statement 47 { '    RECENT_RUN=$(echo "$RESP" | jq -r ".[] | select(.source==\\"push\\") | .id" | head -n1); \\ ' }
+				statement 45 { '    AUTH_HEADER=("JOB-TOKEN: ${CI_JOB_TOKEN}"); \\ ' } // Requires space before '
+				statement 46 { '    RESP="$(curl --silent --show-error --fail -H "${AUTH_HEADER[0]}" "${API_URL}" || true)"; \\ ' } // Works
+				statement 47 { '    RECENT_RUN=$(echo "$RESP" | jq -r ".[] | select(.source==\\\\"push\\\\") | .id" | head -n1); \\ ' }
 				statement 48 { '  }' }
 				statement 49 { '  if [ -n "$RECENT_RUN" ]; then' }
 				statement 50 { '    echo "should-test=false" >> ${GITHUB_OUTPUT:-build.env}' }
