@@ -1,7 +1,5 @@
 workflow:
   name: NRuuviTag Automatic Integration Pipeline
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push"'
 
 stages:
   - check_test_needed
@@ -23,6 +21,8 @@ checkIfTestNeeded:
   stage: check_test_needed
   tags:
     - saas-linux-medium-amd64
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
   only:
     refs:
       - '*'
@@ -97,13 +97,14 @@ buildAndTest:
   stage: build_and_test
   tags:
     - saas-linux-medium-amd64
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '${SHOULD_TEST} == "true"'
   only:
     refs:
       - '*'
   needs:
     - checkIfTestNeeded
-  rules:
-    - if: '${SHOULD_TEST} == "true"'
   cache:
     - key: cake-tools
       when: on_success

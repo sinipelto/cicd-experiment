@@ -21,6 +21,8 @@ checkIfTestNeeded:
   stage: check_test_needed
   tags:
     - saas-linux-medium-amd64
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
   only:
     refs:
       - '*'
@@ -95,6 +97,8 @@ buildAndTest:
   stage: build_and_test
   tags:
     - saas-linux-medium-amd64
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
   only:
     refs:
       - '*'
