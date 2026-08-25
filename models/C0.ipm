@@ -163,10 +163,14 @@ package nRuuviTagPipeline {
 			// setCacheXXXXX => add to cache list
 		   behavior setCacheNuget {
 				statement path0 { '~/.nuget/packages' }
+				statement when { 'on_success' }
+				statement untracked {'false'}
 				customAttribute key = 'nuget';
 		   }
 		   behavior setCacheCake {
 				statement path0 { 'tools' }
+				statement when { 'on_success' }
+				statement untracked {'false'}
 				customAttribute key = 'cake-tools';
 		   }
 		   // setLibraryXXXXXX => steps => uses: XXXX with YYYYY
